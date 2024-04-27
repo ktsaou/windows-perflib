@@ -79,6 +79,15 @@ DWORD findIDByName(const char* key) {
     return -1;  // Not found
 }
 
+const char *findNameByID(DWORD id) {
+    if(id < HASH_TABLE_SIZE) {
+        HashTableEntry *titleEntry = idArray[id];
+        if(titleEntry)
+            return titleEntry->key;
+    }
+    return "";
+}
+
 // ----------------------------------------------------------
 
 void readCounterIDs() {
@@ -442,7 +451,7 @@ BOOL GetFullInstanceName(PERF_INSTANCE_DEFINITION* pInstance, DWORD CodePage, WC
 
         if (FALSE == fSuccess)
         {
-            wprintf(L"ConvertNameToUnicode for instance failed.\n");
+            printf("ConvertNameToUnicode() for instance failed.\n");
             goto cleanup;
         }
     }
@@ -470,16 +479,16 @@ BOOL GetFullInstanceName(PERF_INSTANCE_DEFINITION* pInstance, DWORD CodePage, WC
 
             if (FALSE == fSuccess)
             {
-                wprintf(L"ConvertNameToUnicode for parent instance failed.\n");
+                printf("ConvertNameToUnicode for parent instance failed.\n");
                 goto cleanup;
             }
         }
 
-        snprintf(pName, MAX_FULL_INSTANCE_NAME_LEN+1, L"%s/%s", wszParentInstanceName, wszInstanceName);
+        snprintf(pName, MAX_FULL_INSTANCE_NAME_LEN+1, "%ls/%ls", wszParentInstanceName, wszInstanceName);
     }
     else
     {
-        snprintf(pName, MAX_INSTANCE_NAME_LEN+1, L"%s", wszInstanceName);
+        snprintf(pName, MAX_INSTANCE_NAME_LEN+1, "%ls", wszInstanceName);
     }
 
 cleanup:
@@ -525,6 +534,7 @@ PERF_INSTANCE_DEFINITION* GetParentInstance(PERF_OBJECT_TYPE* pObject, DWORD dwI
     return (PERF_INSTANCE_DEFINITION*)pInstance;
 }
 
+// --------------------------------------------------------------------------------------------------------------------
 
 // Retrieve the raw counter value and any supporting data needed to calculate
 // a displayable counter value. Use the counter type to determine the information
@@ -943,33 +953,14 @@ void txtCopy(char *dst, size_t dst_len, char *src, size_t src_len) {
     dst[len] = '\0';
 }
 
+// --------------------------------------------------------------------------------------------------------------------
+
 BOOL isValidPointer(PERF_DATA_BLOCK *pDataBlock, void *ptr) {
     return (PBYTE)ptr >= (PBYTE)pDataBlock + pDataBlock->TotalByteLength ? FALSE : TRUE;
 }
 
 BOOL isValidStructure(PERF_DATA_BLOCK *pDataBlock, void *ptr, size_t length) {
     return (PBYTE)ptr + length > (PBYTE)pDataBlock + pDataBlock->TotalByteLength ? FALSE : TRUE;
-}
-
-void printDataBlock(PERF_DATA_BLOCK *pDataBlock) {
-    char systemName[4096] = "";
-    // txtCopy(systemName, (char *)((PBYTE)pDataBlock + pDataBlock->SystemNameOffset), sizeof(systemName), pDataBlock->SystemNameLength);
-
-    printf("\n--------------------------------------------------------------\n");
-    printf("Data Block\n");
-    printf("System name: %s\n", systemName);
-    printf("Number of ObjectTypes: %u\n", pDataBlock->NumObjectTypes);
-    printf("Total Bytes Length: %u\n", pDataBlock->TotalByteLength);
-    printf("Revision: %u\n", pDataBlock->Revision);
-}
-
-void printObjectType(PERF_DATA_BLOCK *pDataBlock, PERF_OBJECT_TYPE *pObjectType) {
-    (void)pDataBlock;
-
-    printf("\n--------------------------------------------------------------\n");
-    printf("Object Type\n");
-    printf("Number of Instances: %u\n", pObjectType->NumInstances);
-    printf("Number of Counters: %u\n", pObjectType->NumCounters);
 }
 
 PERF_DATA_BLOCK *getDataBlock(BYTE *pBuffer) {
@@ -1077,6 +1068,67 @@ PERF_COUNTER_DEFINITION *getCounterDefinition(
     return pCounterDefinition;
 }
 
+// --------------------------------------------------------------------------------------------------------------------
+
+void printDataBlock(PERF_DATA_BLOCK *pDataBlock) {
+    char systemName[4096] = "";
+    // txtCopy(systemName, (char *)((PBYTE)pDataBlock + pDataBlock->SystemNameOffset), sizeof(systemName), pDataBlock->SystemNameLength);
+
+    printf("\n--------------------------------------------------------------\n");
+    printf("Data Block\n");
+    printf("System name: %s\n", systemName);
+    printf("Number of ObjectTypes: %d\n", pDataBlock->NumObjectTypes);
+    printf("Total Bytes Length: %d\n", pDataBlock->TotalByteLength);
+    printf("Revision: %d\n", pDataBlock->Revision);
+}
+
+void printObjectType(PERF_DATA_BLOCK *pDataBlock, PERF_OBJECT_TYPE *pObjectType) {
+    (void)pDataBlock;
+
+    printf("\n   --------------------------------------------------------------\n");
+    printf("   Object Type\n");
+    printf("   Number of Instances: %d\n", pObjectType->NumInstances);
+    printf("   Number of Counters: %d\n", pObjectType->NumCounters);
+    printf("   Title: %s\n", findNameByID(pObjectType->ObjectNameTitleIndex));
+    printf("   Help: %s\n", findNameByID(pObjectType->ObjectHelpTitleIndex));
+}
+
+BOOL getInstanceName(PERF_DATA_BLOCK *pDataBlock, PERF_OBJECT_TYPE *pObjectType, PERF_INSTANCE_DEFINITION *pInstance,
+                     char *buffer, size_t bufferLen) {
+    if (!pInstance || !buffer || !bufferLen) return FALSE;
+
+    // Convert WCHAR to CHAR
+    WCHAR *uniName = (WCHAR *)((char*)pInstance + pInstance->NameOffset);
+    int nameLen = pInstance->NameLength / sizeof(WCHAR);  // Number of WCHARs
+
+    // Use WideCharToMultiByte to convert Unicode to ANSI
+    int bytesCopied = WideCharToMultiByte(CP_ACP, 0, uniName, nameLen, buffer, (int)bufferLen, NULL, NULL);
+
+    if (bytesCopied == 0) {
+        // Handle the error, perhaps buffer is too small or an invalid character was encountered
+        buffer[0] = '\0'; // Ensure the buffer is null-terminated even on failure
+        return FALSE;
+    }
+
+    // Ensure buffer is null-terminated
+    buffer[bytesCopied] = '\0';
+
+    return TRUE;
+}
+
+void printInstance(PERF_DATA_BLOCK *pDataBlock, PERF_OBJECT_TYPE *pObjectType, PERF_INSTANCE_DEFINITION *pInstance) {
+    char name[4096];
+    if(!getInstanceName(pDataBlock, pObjectType, pInstance, name, sizeof(name)))
+        strncpy(name, "[failed]", sizeof(name));
+
+    printf("\n      --------------------------------------------------------------\n");
+    printf("      Instance Definition\n");
+    printf("      Unique ID %d\n", pInstance->UniqueID);
+    printf("      Object Title: %s\n", findNameByID(pObjectType->ObjectNameTitleIndex));
+    printf("      Object Help: %s\n", findNameByID(pObjectType->ObjectHelpTitleIndex));
+    printf("      Name: %s\n", name);
+}
+
 int main(void)
 {
     readCounterIDs();
@@ -1096,10 +1148,10 @@ int main(void)
     printDataBlock(pDataBlock);
 
     PERF_OBJECT_TYPE* pObjectType = NULL;
-    for(unsigned d = 0; d < pDataBlock->NumObjectTypes; d++) {
+    for(int d = 0; d < pDataBlock->NumObjectTypes; d++) {
         pObjectType = getObjectType(pDataBlock, pObjectType);
         if(!pObjectType) {
-            printf("> Cannot read object type No %u (out of %u)\n", d, pDataBlock->NumObjectTypes);
+            printf("> Cannot read object type No %d (out of %d)\n", d, pDataBlock->NumObjectTypes);
             break;
         }
 
@@ -1108,16 +1160,23 @@ int main(void)
         if(pObjectType->NumInstances != PERF_NO_INSTANCES && pObjectType->NumInstances > 0) {
             PERF_INSTANCE_DEFINITION *pInstance = NULL;
             PERF_COUNTER_BLOCK *pCounterBlock = NULL;
-            for(unsigned i = 0; i < pObjectType->NumInstances ;i++) {
+            for(int i = 0; i < pObjectType->NumInstances ;i++) {
                 pInstance = getInstance(pDataBlock, pObjectType, pCounterBlock);
+                if(!pInstance) {
+                    printf(" > Cannot read Instance No %d (out of %d)\n", i, pObjectType->NumInstances);
+                    break;
+                }
+
+                printInstance(pDataBlock, pObjectType, pInstance);
+
                 pCounterBlock = getInstanceCounterBlock(pDataBlock, pObjectType, pInstance);
                 if(!pCounterBlock) {
-                    printf("> Cannot read CounterBlock of instance No %u (out of %u)\n", i, pObjectType->NumInstances);
+                    printf("> Cannot read CounterBlock of instance No %d (out of %d)\n", i, pObjectType->NumInstances);
                     break;
                 }
 
                 PERF_COUNTER_DEFINITION *pCounterDefinition = NULL;
-                for(unsigned c = 0; c < pObjectType->NumCounters ;c++) {
+                for(int c = 0; c < pObjectType->NumCounters ;c++) {
                     pCounterDefinition = getCounterDefinition(pDataBlock, pObjectType, pCounterDefinition);
                     if(!pCounterDefinition) {
                         printf("> Cannot read counter definition No %u (out of %u)\n", c, pObjectType->NumCounters);
@@ -1130,7 +1189,7 @@ int main(void)
                     if(GetValue(pObjectType, pCounterDefinition, pCounterBlock, &sample))
                         DisplayCalculatedValue(&sample, NULL);
                     else
-                        printf("> Cannot get Value of object %u, instance %u, counter %u", d, i, c);
+                        printf("> Cannot get Value of object %d, instance %d, counter %d", d, i, c);
                 }
             }
         }
@@ -1140,7 +1199,7 @@ int main(void)
             for(unsigned c = 0; c < pObjectType->NumCounters ;c++) {
                 pCounterDefinition = getCounterDefinition(pDataBlock, pObjectType, pCounterDefinition);
                 if(!pCounterDefinition) {
-                    printf("> Cannot read counter definition No %u (out of %u)\n", c, pObjectType->NumCounters);
+                    printf("> Cannot read counter definition No %d (out of %d)\n", c, pObjectType->NumCounters);
                     break;
                 }
 
@@ -1150,7 +1209,7 @@ int main(void)
                 if(GetValue(pObjectType, pCounterDefinition, pCounterBlock, &sample))
                     DisplayCalculatedValue(&sample, NULL);
                 else
-                    printf("> Cannot get Value of object %u, counter %u", d, c);
+                    printf("> Cannot get Value of object %d, counter %d", d, c);
             }
         }
     }
